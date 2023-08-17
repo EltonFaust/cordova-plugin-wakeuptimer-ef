@@ -26,6 +26,14 @@ var Wakeup = (function (){
         exec(success, error, "WakeupPlugin", "openAutoStartPrefs", []);
     };
 
+    Wakeup.prototype.checkNotificationPerm = function (success, error) {
+        exec(success, error, "WakeupPlugin", "checkNotificationPerm", []);
+    };
+
+    Wakeup.prototype.requestNotificationPerm = function (success, error) {
+        exec(success, error, "WakeupPlugin", "requestNotificationPerm", []);
+    };
+
     Wakeup.prototype.wakeup = function (success, error, options) {
         exec(success, error, "WakeupPlugin", "wakeup", [options]);
     };

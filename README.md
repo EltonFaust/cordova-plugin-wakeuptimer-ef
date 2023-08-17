@@ -68,6 +68,30 @@ window.wakeuptimer.wakeup(
 // ******************************************************************/
 // *** All methods below are Android Only and its use is OPTIONAL ***/
 // ******************************************************************/
+
+/*
+Since Android 13 (SDK 33), android requires an user manual permission to show notifications,
+as this pligin uses a notification to allow the alarm stop without entering the app,
+this methods allow to know if the permission is granted and allow to dynamically request it
+
+Note: if the user dismisses the permission modal, will result as not allowed
+*/
+window.wakeuptimer.checkNotificationPerm(
+    function (allowed) {
+        console.log('Permission already granted? ', allowed ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+
+window.wakeuptimer.requestNotificationPerm(
+    function (allowed) {
+        console.log('Permission was granted? ', allowed ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+
 /*
 Q: Why use this methods?
 A: The Android system does't like to launch an app without any user interaction,

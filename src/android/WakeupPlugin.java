@@ -25,7 +25,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.SharedPreferences;
-// import android.Manifest;
+import android.Manifest;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -41,6 +41,8 @@ public class WakeupPlugin extends CordovaPlugin {
 
     private static CallbackContext connectionCallbackContext = null;
     private static String pendingWakeupResult = null;
+
+    private static CallbackContext notificatioPermCallback;
 
     // private CallbackContext permissionsCallback;
     // private JSONArray pendingSetAlarms;
@@ -107,6 +109,11 @@ public class WakeupPlugin extends CordovaPlugin {
                 boolean openedPreferences = WakeupAutoStartHelper.getInstance().openAutoStartPreferences(cordova.getContext());
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, openedPreferences);
                 callbackContext.sendPluginResult(pluginResult);
+            }  else if (action.equals("checkNotificationPerm")) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, hasNotificationPermission());
+                callbackContext.sendPluginResult(pluginResult);
+            } else if (action.equals("requestNotificationPerm")) {
+                requestNotificationPermission(callbackContext);
             } else if (action.equals("wakeup")) {
                 cleaPendingWakeupResult();
 
@@ -120,21 +127,10 @@ public class WakeupPlugin extends CordovaPlugin {
                     alarms = new JSONArray(); // default to empty array
                 }
 
-                // if (
-                //     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                //     && alarms.length() > 0
-                //     && !cordova.hasPermission(Manifest.permission.SCHEDULE_EXACT_ALARM)
-                // ) {
-                //     cordova.requestPermission(this, 1, Manifest.permission.SCHEDULE_EXACT_ALARM);
-                //     log("Permission required");
-                //     this.pendingSetAlarms = alarms;
-                //     this.permissionsCallback = callbackContext;
-                // } else {
-                    saveAlarmsToPrefs(content, alarms);
-                    setAlarms(content, alarms, true);
+                saveAlarmsToPrefs(content, alarms);
+                setAlarms(content, alarms, true);
 
-                    callbackContext.success();
-                // }
+                callbackContext.success();
             } else if (action.equals("stop")) {
                 cleaPendingWakeupResult();
                 cordova.getContext().stopService(new Intent(cordova.getActivity(), WakeupStartService.class));
@@ -153,46 +149,49 @@ public class WakeupPlugin extends CordovaPlugin {
         return false;
     }
 
-    // @Override
-    // public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
-    //     if (
-    //         this.permissionsCallback == null
-    //         || Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-    //     ) {
-    //         return;
-    //     }
+    @Override
+    public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
+        if (
+            notificatioPermCallback == null
+            || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        ) {
+            return;
+        }
 
-    //     if (permissions != null && permissions.length > 0) {
-    //         boolean hasPermission = false;
+        if (permissions == null || permissions.length == 0) {
+            return;
+        }
 
-    //         for (String permission : permissions) {
-    //             if (
-    //                 permission.equals(Manifest.permission.SCHEDULE_EXACT_ALARM)
-    //                 && cordova.hasPermission(Manifest.permission.SCHEDULE_EXACT_ALARM)
-    //             ) {
-    //                 hasPermission = false;
-    //                 break;
-    //             }
-    //         }
+        for (String permission : permissions) {
+            if (permission.equals(Manifest.permission.POST_NOTIFICATIONS)) {
+                log("Notification permission changed");
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, cordova.hasPermission(Manifest.permission.POST_NOTIFICATIONS));
+                notificatioPermCallback.sendPluginResult(pluginResult);
+                notificatioPermCallback = null;
+                return;
+            }
+        }
+    }
 
-    //         if (hasPermission) {
-    //             if (this.pendingSetAlarms != null) {
-    //                 Context content = cordova.getActivity().getApplicationContext();
-    //                 saveAlarmsToPrefs(content, this.pendingSetAlarms);
-    //                 setAlarms(content, this.pendingSetAlarms, true);
-    //                 this.pendingSetAlarms = null;
-    //             }
+    private boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+            || cordova.hasPermission(Manifest.permission.POST_NOTIFICATIONS);
+    }
 
-    //             this.permissionsCallback.success();
-    //         } else {
-    //             this.permissionsCallback.error("Permission not granted");
-    //         }
-    //     } else {
-    //         this.permissionsCallback.error("Unknown error.");
-    //     }
+    private void requestNotificationPermission(CallbackContext callbackContext) {
+        if (hasNotificationPermission()) {
+            if (callbackContext != null) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, true);
+                callbackContext.sendPluginResult(pluginResult);
+            }
 
-    //     this.permissionsCallback = null;
-    // }
+            notificatioPermCallback = null;
+        } else {
+            cordova.requestPermission(this, 1, Manifest.permission.POST_NOTIFICATIONS);
+            notificatioPermCallback = callbackContext;
+            log("Post Notifications permission required");
+        }
+    }
 
     public static void sendWakeupResult(String extras) {
         if (connectionCallbackContext != null) {
