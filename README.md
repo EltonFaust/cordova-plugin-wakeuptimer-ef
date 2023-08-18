@@ -76,6 +76,7 @@ this methods allow to know if the permission is granted and allow to dynamically
 
 Note: if the user dismisses the permission modal, will result as not allowed
 */
+// check if the app can create notifications
 window.wakeuptimer.checkNotificationPerm(
     function (allowed) {
         console.log('Permission already granted? ', allowed ? 'yes' : 'no');
@@ -83,10 +84,37 @@ window.wakeuptimer.checkNotificationPerm(
     },
     errorCallback,
 );
-
+// require the permission to create notifications
 window.wakeuptimer.requestNotificationPerm(
     function (allowed) {
         console.log('Permission was granted? ', allowed ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+// open app settings on notification options
+window.wakeuptimer.openAppNotificationSettings(
+    function (opened) {
+        console.log('App notification settings opened? ', opened ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+// if the user deny once the permission, the app should show an alert to warn user why the permission is needed before requesting again,
+// the ideal is:
+//
+// - require the permission
+// - the user does't allow
+// - store if should show details before requiring again
+// - require the permission again
+// - the user does't again
+// - check again if should show details before requiring again
+// - if in this time return false, the app should not require again the permission
+//
+// https://developer.android.com/training/permissions/requesting?hl=pt-br#request-permission
+window.wakeuptimer.shouldRequestNotificationPermRat(
+    function (should) {
+        console.log('Should show why the permission is important before requesting again? ', should ? 'yes' : 'no');
         // do something...
     },
     errorCallback,

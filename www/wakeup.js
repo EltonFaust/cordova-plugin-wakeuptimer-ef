@@ -30,8 +30,16 @@ var Wakeup = (function (){
         exec(success, error, "WakeupPlugin", "checkNotificationPerm", []);
     };
 
+    Wakeup.prototype.shouldRequestNotificationPermRat = function (success, error) {
+        exec(success, error, "WakeupPlugin", "shouldRequestNotificationPermRat", []);
+    };
+
     Wakeup.prototype.requestNotificationPerm = function (success, error) {
         exec(success, error, "WakeupPlugin", "requestNotificationPerm", []);
+    };
+
+    Wakeup.prototype.openAppNotificationSettings = function (success, error) {
+        exec(success, error, "WakeupPlugin", "openAppNotificationSettings", []);
     };
 
     Wakeup.prototype.wakeup = function (success, error, options) {

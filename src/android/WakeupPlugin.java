@@ -7,6 +7,7 @@ import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
+import android.net.Uri;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
@@ -31,6 +32,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.util.Log;
+import android.provider.Settings;
+import androidx.core.app.ActivityCompat;
 
 public class WakeupPlugin extends CordovaPlugin {
 
@@ -38,14 +41,12 @@ public class WakeupPlugin extends CordovaPlugin {
 
     private static final int ID_DAYLIST_OFFSET = 10010;
     private static final int ID_ONETIME_OFFSET = 10000;
+    private static final int ID_PERMISSION_REQUEST_CODE = 684981;
 
     private static CallbackContext connectionCallbackContext = null;
     private static String pendingWakeupResult = null;
 
     private static CallbackContext notificatioPermCallback;
-
-    // private CallbackContext permissionsCallback;
-    // private JSONArray pendingSetAlarms;
 
     public static Map<String, Integer> daysOfWeek = new HashMap<String, Integer>() {
         private static final long serialVersionUID = 1L;
@@ -109,11 +110,17 @@ public class WakeupPlugin extends CordovaPlugin {
                 boolean openedPreferences = WakeupAutoStartHelper.getInstance().openAutoStartPreferences(cordova.getContext());
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, openedPreferences);
                 callbackContext.sendPluginResult(pluginResult);
-            }  else if (action.equals("checkNotificationPerm")) {
+            } else if (action.equals("checkNotificationPerm")) {
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, hasNotificationPermission());
+                callbackContext.sendPluginResult(pluginResult);
+            } else if (action.equals("shouldRequestNotificationPermRat")) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, shouldRequestNotificationPermissionRationale());
                 callbackContext.sendPluginResult(pluginResult);
             } else if (action.equals("requestNotificationPerm")) {
                 requestNotificationPermission(callbackContext);
+            } else if (action.equals("openAppNotificationSettings")) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, openAppNotificationSettings());
+                callbackContext.sendPluginResult(pluginResult);
             } else if (action.equals("wakeup")) {
                 cleaPendingWakeupResult();
 
@@ -129,6 +136,10 @@ public class WakeupPlugin extends CordovaPlugin {
 
                 saveAlarmsToPrefs(content, alarms);
                 setAlarms(content, alarms, true);
+
+                if (alarms.length() > 0) {
+
+                }
 
                 callbackContext.success();
             } else if (action.equals("stop")) {
@@ -154,6 +165,7 @@ public class WakeupPlugin extends CordovaPlugin {
         if (
             notificatioPermCallback == null
             || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+            || requestCode != ID_PERMISSION_REQUEST_CODE
         ) {
             return;
         }
@@ -178,18 +190,59 @@ public class WakeupPlugin extends CordovaPlugin {
             || cordova.hasPermission(Manifest.permission.POST_NOTIFICATIONS);
     }
 
+    private boolean shouldRequestNotificationPermissionRationale() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && !cordova.hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+            && ActivityCompat.shouldShowRequestPermissionRationale(
+                cordova.getActivity(),
+                Manifest.permission.POST_NOTIFICATIONS
+            );
+    }
+
     private void requestNotificationPermission(CallbackContext callbackContext) {
         if (hasNotificationPermission()) {
+            // alreaty requested, send the previous fallback an "allowed" status
+            if (notificatioPermCallback != null) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, true);
+                notificatioPermCallback.sendPluginResult(pluginResult);
+                notificatioPermCallback = null;
+            }
+
             if (callbackContext != null) {
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, true);
                 callbackContext.sendPluginResult(pluginResult);
             }
-
-            notificatioPermCallback = null;
         } else {
-            cordova.requestPermission(this, 1, Manifest.permission.POST_NOTIFICATIONS);
+            cordova.requestPermission(this, ID_PERMISSION_REQUEST_CODE, Manifest.permission.POST_NOTIFICATIONS);
             notificatioPermCallback = callbackContext;
             log("Post Notifications permission required");
+        }
+    }
+
+    private boolean openAppNotificationSettings() {
+        try {
+            Intent intent = new Intent();
+            Context context = cordova.getActivity().getApplicationContext();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                intent.setAction(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP){
+                intent.setAction("android.settings.APP_NOTIFICATION_SETTINGS");
+                intent.putExtra("app_package", context.getPackageName());
+                intent.putExtra("app_uid", context.getApplicationInfo().uid);
+            } else {
+                intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.addCategory(Intent.CATEGORY_DEFAULT);
+                intent.setData(Uri.parse("package:" + context.getPackageName()));
+            }
+
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            cordova.getActivity().startActivity(intent);
+
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
