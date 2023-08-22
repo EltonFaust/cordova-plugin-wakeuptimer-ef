@@ -31,8 +31,8 @@ import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
-import android.util.Log;
 import android.provider.Settings;
+import android.util.Log;
 import androidx.core.app.ActivityCompat;
 
 public class WakeupPlugin extends CordovaPlugin {
@@ -41,6 +41,7 @@ public class WakeupPlugin extends CordovaPlugin {
 
     private static final int ID_DAYLIST_OFFSET = 10010;
     private static final int ID_ONETIME_OFFSET = 10000;
+    private static final int ID_SEQUENTIAL_OFFSET = 10020;
     private static final int ID_PERMISSION_REQUEST_CODE = 684981;
 
     private static CallbackContext connectionCallbackContext = null;
@@ -134,12 +135,9 @@ public class WakeupPlugin extends CordovaPlugin {
                     alarms = new JSONArray(); // default to empty array
                 }
 
+                cancelAlarms(content);
                 saveAlarmsToPrefs(content, alarms);
-                setAlarms(content, alarms, true);
-
-                if (alarms.length() > 0) {
-
-                }
+                setAlarms(content, alarms, false);
 
                 callbackContext.success();
             } else if (action.equals("stop")) {
@@ -301,16 +299,25 @@ public class WakeupPlugin extends CordovaPlugin {
     }
 
     public static void setAlarmsFromPrefs(Context context) {
+        log("Setting alarms from prefs");
+
+        try {
+            JSONArray alarms = getAlarmsFromPrefs(context);
+            WakeupPlugin.setAlarms(context, alarms, true);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static JSONArray getAlarmsFromPrefs(Context context) {
         try {
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
             String serializedAlarms = prefs.getString("alarms", "[]");
 
-            log("Setting alarms:\n" + serializedAlarms);
-
-            JSONArray alarms = new JSONArray(serializedAlarms);
-            WakeupPlugin.setAlarms(context, alarms, true);
+            return new JSONArray(serializedAlarms);
         } catch (JSONException e) {
             e.printStackTrace();
+            return new JSONArray();
         }
     }
 
@@ -319,6 +326,8 @@ public class WakeupPlugin extends CordovaPlugin {
         if (cancelAlarms) {
             cancelAlarms(context);
         }
+
+        int offsetAlarm = ID_SEQUENTIAL_OFFSET - 1;
 
         for (int i = 0; i < alarms.length(); i++) {
             JSONObject alarm = alarms.getJSONObject(i);
@@ -343,7 +352,8 @@ public class WakeupPlugin extends CordovaPlugin {
                     intent.putExtra("type", type);
                 }
 
-                setNotification(context, type, alarmDate, intent, ID_ONETIME_OFFSET);
+                offsetAlarm++;
+                setNotification(context, type, alarmDate, intent, offsetAlarm);
             } else if (type.equals("daylist")) {
                 JSONArray days = alarm.getJSONArray("days");
 
@@ -358,10 +368,17 @@ public class WakeupPlugin extends CordovaPlugin {
                         intent.putExtra("day", days.getString(j));
                     }
 
-                    setNotification(context, type, alarmDate, intent, ID_DAYLIST_OFFSET + daysOfWeek.get(days.getString(j)));
+                    offsetAlarm++;
+                    setNotification(context, type, alarmDate, intent, offsetAlarm);
                 }
             }
         }
+
+        // save the ammount of alarms
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putInt("alarms_count", offsetAlarm - (ID_SEQUENTIAL_OFFSET - 1));
+        editor.apply();
 
         // enable/disable boot receiver
         ComponentName receiver = new ComponentName(context, WakeupBootReceiver.class);
@@ -415,21 +432,38 @@ public class WakeupPlugin extends CordovaPlugin {
     }
 
     private static void cancelAlarms(Context context) {
-        log("Canceling alarms");
-        Intent intent = new Intent(context, WakeupReceiver.class);
-        PendingIntent sender = PendingIntent.getBroadcast(
-            context, ID_ONETIME_OFFSET, intent,
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
-        );
-        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        log("Cancelling alarm id " + ID_ONETIME_OFFSET);
-        alarmManager.cancel(sender);
+        JSONArray currentAlarms = getAlarmsFromPrefs(context);
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
 
-        for (int i = 0; i < 7; i++) {
+        int alarmsCount = prefs.getInt("alarms_count", 0);
+        int alarmListSize = 1 + 7 + alarmsCount;
+        int[] currentAlarmsId = new int[alarmListSize];
+
+        // id old one time usage
+        currentAlarmsId[0] = ID_ONETIME_OFFSET;
+
+        // ids old daily list (1 .. 7)
+        for (int i = 1; i <= 7; i++) {
+            currentAlarmsId[i] = ID_DAYLIST_OFFSET + i - 1;
+        }
+
+        // ids new format (8 ... N)
+        for (int i = 0; i < alarmsCount; i++) {
+            currentAlarmsId[8 + i] = ID_SEQUENTIAL_OFFSET + i;
+        }
+
+        log("Canceling alarms");
+
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        Intent intent;
+        PendingIntent sender;
+
+        for (int i = 0; i < alarmListSize; i++) {
+            log("Cancelling alarm id " + currentAlarmsId[i]);
+
             intent = new Intent(context, WakeupReceiver.class);
-            log("Cancelling alarm id " + (ID_DAYLIST_OFFSET+i));
             sender = PendingIntent.getBroadcast(
-                context, ID_DAYLIST_OFFSET + i, intent,
+                context, currentAlarmsId[i], intent,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
             );
             alarmManager.cancel(sender);

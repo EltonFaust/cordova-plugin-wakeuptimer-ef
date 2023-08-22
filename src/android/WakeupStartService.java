@@ -347,8 +347,8 @@ public class WakeupStartService extends Service {
 
     private Notification createNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            CharSequence name = "cordova-plugin-wakeuptimer";
-            String description = "cordova-plugin-wakeuptimer notification";
+            CharSequence name = "Alarm";
+            String description = "Wake up alarm notification";
             int importance = NotificationManager.IMPORTANCE_HIGH;
 
             NotificationChannel notificationChannel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance);
