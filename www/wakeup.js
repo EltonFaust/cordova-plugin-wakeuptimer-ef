@@ -42,6 +42,14 @@ var Wakeup = (function (){
         exec(success, error, "WakeupPlugin", "openAppNotificationSettings", []);
     };
 
+    Wakeup.prototype.checkAlarmPerm = function (success, error) {
+        exec(success, error, "WakeupPlugin", "checkAlarmPerm", []);
+    };
+
+    Wakeup.prototype.openAppAlarmSettings = function (success, error) {
+        exec(success, error, "WakeupPlugin", "openAppAlarmSettings", []);
+    };
+
     Wakeup.prototype.wakeup = function (success, error, options) {
         exec(success, error, "WakeupPlugin", "wakeup", [options]);
     };
@@ -52,6 +60,5 @@ var Wakeup = (function (){
 
     return new Wakeup();
 })();
-
 
 module.exports = Wakeup;

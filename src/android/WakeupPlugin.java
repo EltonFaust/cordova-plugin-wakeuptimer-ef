@@ -122,6 +122,12 @@ public class WakeupPlugin extends CordovaPlugin {
             } else if (action.equals("openAppNotificationSettings")) {
                 PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, openAppNotificationSettings());
                 callbackContext.sendPluginResult(pluginResult);
+            } else if (action.equals("checkAlarmPerm")) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, hasExactAlarmPermission());
+                callbackContext.sendPluginResult(pluginResult);
+            } else if (action.equals("openAppAlarmSettings")) {
+                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, openAppAlarmSettings());
+                callbackContext.sendPluginResult(pluginResult);
             } else if (action.equals("wakeup")) {
                 cleaPendingWakeupResult();
 
@@ -136,10 +142,14 @@ public class WakeupPlugin extends CordovaPlugin {
                 }
 
                 cancelAlarms(content);
-                saveAlarmsToPrefs(content, alarms);
-                setAlarms(content, alarms, false);
 
-                callbackContext.success();
+                if (alarms.length() == 0 || hasExactAlarmPermission()) {
+                    saveAlarmsToPrefs(content, alarms);
+                    setAlarms(content, alarms, false);
+                    callbackContext.success();
+                } else {
+                    callbackContext.error("Error: alarm schedule permission required");
+                }
             } else if (action.equals("stop")) {
                 cleaPendingWakeupResult();
                 cordova.getContext().stopService(new Intent(cordova.getActivity(), WakeupStartService.class));
@@ -164,11 +174,9 @@ public class WakeupPlugin extends CordovaPlugin {
             notificatioPermCallback == null
             || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
             || requestCode != ID_PERMISSION_REQUEST_CODE
+            || permissions == null
+            || permissions.length == 0
         ) {
-            return;
-        }
-
-        if (permissions == null || permissions.length == 0) {
             return;
         }
 
@@ -180,6 +188,37 @@ public class WakeupPlugin extends CordovaPlugin {
                 notificatioPermCallback = null;
                 return;
             }
+        }
+    }
+
+    private boolean hasExactAlarmPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true;
+        }
+
+        AlarmManager alarmManager = (AlarmManager) cordova.getContext().getSystemService(Context.ALARM_SERVICE);
+
+        return alarmManager.canScheduleExactAlarms();
+    }
+
+    private boolean openAppAlarmSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return false;
+        }
+
+        try {
+            Context context = cordova.getActivity().getApplicationContext();
+            Intent intent = new Intent(
+                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:" + context.getPackageName())
+            );
+
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            cordova.getActivity().startActivity(intent);
+
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -327,6 +366,17 @@ public class WakeupPlugin extends CordovaPlugin {
             cancelAlarms(context);
         }
 
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+
+        if (
+            alarms.length() > 0
+            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            && !alarmManager.canScheduleExactAlarms()
+        ) {
+            log("Can't set alarms, app can't schedule exact alarms");
+            return;
+        }
+
         int offsetAlarm = ID_SEQUENTIAL_OFFSET - 1;
 
         for (int i = 0; i < alarms.length(); i++) {
@@ -394,40 +444,42 @@ public class WakeupPlugin extends CordovaPlugin {
     }
 
     private static void setNotification(Context context, String type, Calendar alarmDate, Intent intent, int id) throws JSONException{
-        if (alarmDate != null) {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            log("Setting alarm at " + sdf.format(alarmDate.getTime()) + "; id " + id);
+        if (alarmDate == null) {
+            return;
+        }
 
-            intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            PendingIntent sender = PendingIntent.getBroadcast(
-                context, id, intent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
-            );
-            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        log("Setting alarm at " + sdf.format(alarmDate.getTime()) + "; id " + id);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                AlarmManager.AlarmClockInfo alarmClockInfo = new AlarmManager.AlarmClockInfo(alarmDate.getTimeInMillis(), sender);
-                alarmManager.setAlarmClock(alarmClockInfo, sender);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
-            } else {
-                alarmManager.set(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
-            }
+        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent sender = PendingIntent.getBroadcast(
+            context, id, intent,
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
+        );
 
-            if (connectionCallbackContext != null) {
-                JSONObject o = new JSONObject();
-                o.put("type", "set");
-                o.put("alarm_type", type);
-                o.put("alarm_date", alarmDate.getTimeInMillis());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            AlarmManager.AlarmClockInfo alarmClockInfo = new AlarmManager.AlarmClockInfo(alarmDate.getTimeInMillis(), sender);
+            alarmManager.setAlarmClock(alarmClockInfo, sender);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            alarmManager.setExact(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
+        } else {
+            alarmManager.set(AlarmManager.RTC_WAKEUP, alarmDate.getTimeInMillis(), sender);
+        }
 
-                log("Alarm time in millis: " + alarmDate.getTimeInMillis());
+        if (connectionCallbackContext != null) {
+            JSONObject o = new JSONObject();
+            o.put("type", "set");
+            o.put("alarm_type", type);
+            o.put("alarm_date", alarmDate.getTimeInMillis());
 
-                PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, o);
-                pluginResult.setKeepCallback(true);
-                connectionCallbackContext.sendPluginResult(pluginResult);
-            }
+            log("Alarm time in millis: " + alarmDate.getTimeInMillis());
+
+            PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, o);
+            pluginResult.setKeepCallback(true);
+            connectionCallbackContext.sendPluginResult(pluginResult);
         }
     }
 
