@@ -44,6 +44,7 @@ window.wakeuptimer.bind(
 );
 
 // set wakeup timer
+// important: if the app will be ran on Android 14+ or published on GooglePlay, check the next note
 window.wakeuptimer.wakeup(
     successCallback, errorCallback,
     // a list of alarms to set
@@ -65,6 +66,36 @@ window.wakeuptimer.wakeup(
     }
 );
 
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ----------------------- IMPORTANT FOR ANDROID USAGE -----------------------
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+/*
+    Starting on Android 14 (SDK 34), the android doesn't auto grant permission to schedule an alarm,
+    this permission can't be granted programatically, requiring the user to grant it on the app settings,
+    so before schedule an alarm via the `window.wakeuptimer.wakeup`, should be checked the permission,
+    if it's not granted, can be displayed to the user an option to open the settings and change it manually
+*/
+
+// checking if the app has the alarm permission
+window.wakeuptimer.checkAlarmPerm(
+    function (allowed) {
+        console.log('Alarm permission already granted? ', allowed ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+// open app alarm settings
+window.wakeuptimer.openAppAlarmSettings(
+    function (opened) {
+        console.log('App notification settings opened? ', opened ? 'yes' : 'no');
+        // do something...
+    },
+    errorCallback,
+);
+
+
 // ******************************************************************/
 // *** All methods below are Android Only and its use is OPTIONAL ***/
 // ******************************************************************/
@@ -79,7 +110,7 @@ Note: if the user dismisses the permission modal, will result as not allowed
 // check if the app can create notifications
 window.wakeuptimer.checkNotificationPerm(
     function (allowed) {
-        console.log('Permission already granted? ', allowed ? 'yes' : 'no');
+        console.log('Notification permission already granted? ', allowed ? 'yes' : 'no');
         // do something...
     },
     errorCallback,
@@ -87,7 +118,7 @@ window.wakeuptimer.checkNotificationPerm(
 // require the permission to create notifications
 window.wakeuptimer.requestNotificationPerm(
     function (allowed) {
-        console.log('Permission was granted? ', allowed ? 'yes' : 'no');
+        console.log('Notification permission was granted? ', allowed ? 'yes' : 'no');
         // do something...
     },
     errorCallback,
