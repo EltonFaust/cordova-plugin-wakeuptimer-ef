@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -254,7 +255,7 @@ public class WakeupStartService extends Service {
 
             PendingIntent notifyPendingIntent = PendingIntent.getActivity(
                 context, 0, notifyIntent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
             );
             this.notificationBuilder.setContentIntent(notifyPendingIntent);
         } catch (ClassNotFoundException e) {
@@ -298,9 +299,15 @@ public class WakeupStartService extends Service {
 
         Notification serviceNotification = this.createNotification();
 
-        this.startForeground(NOTIFICATION_ID, serviceNotification);
-        // register a receiver for the destroy intent
-        this.getApplicationContext().registerReceiver(this.broadcastReceiver, new IntentFilter("wakeup-notificaion-destroy"));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // start the service
+            this.startForeground(NOTIFICATION_ID, serviceNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            // register a receiver for the destroy intent
+            this.getApplicationContext().registerReceiver(this.broadcastReceiver, new IntentFilter("wakeup-notificaion-destroy"), Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            this.startForeground(NOTIFICATION_ID, serviceNotification);
+            this.getApplicationContext().registerReceiver(this.broadcastReceiver, new IntentFilter("wakeup-notificaion-destroy"));
+        }
     }
 
     @Override
@@ -381,7 +388,8 @@ public class WakeupStartService extends Service {
 
         // intent responsible for stop service
         Intent dismissIntent = new Intent("wakeup-notificaion-destroy");
-        PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(context, 1, dismissIntent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
+        dismissIntent.setPackage(context.getPackageName());
+        PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(context, 1, dismissIntent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_IMMUTABLE : 0);
 
         // add action on dismiss notification
         this.notificationBuilder.setDeleteIntent(dismissPendingIntent);

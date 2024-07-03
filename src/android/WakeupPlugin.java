@@ -455,7 +455,7 @@ public class WakeupPlugin extends CordovaPlugin {
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent sender = PendingIntent.getBroadcast(
             context, id, intent,
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
         );
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -516,7 +516,7 @@ public class WakeupPlugin extends CordovaPlugin {
             intent = new Intent(context, WakeupReceiver.class);
             sender = PendingIntent.getBroadcast(
                 context, currentAlarmsId[i], intent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
             );
             alarmManager.cancel(sender);
         }

@@ -3,7 +3,7 @@
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
     xmlns:android="http://schemas.android.com/apk/res/android"
     id="cordova-plugin-wakeuptimer-ef"
-    version="1.0.7">
+    version="1.0.8">
 
     <name>WakeupTimer</name>
     <description>Wakeup Plugin</description>
@@ -31,6 +31,7 @@
             <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
             <uses-permission android:name="android.permission.WAKE_LOCK" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
             <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
             <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
             <uses-permission android:name="android.permission.INTERNET" />
@@ -40,7 +41,7 @@
         </config-file>
 
         <config-file target="AndroidManifest.xml" parent="/manifest/application">
-            <service android:name="com.eltonfaust.wakeupplugin.WakeupStartService" />
+            <service android:name="com.eltonfaust.wakeupplugin.WakeupStartService" android:foregroundServiceType="mediaPlayback" android:exported="false" />
         </config-file>
 
         <config-file target="AndroidManifest.xml" parent="/manifest/application">

@@ -1,6 +1,6 @@
 {
     "name": "cordova-plugin-wakeuptimer-ef",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "description": "Wakeup Plugin",
     "cordova": {
         "id": "cordova-plugin-wakeuptimer-ef",

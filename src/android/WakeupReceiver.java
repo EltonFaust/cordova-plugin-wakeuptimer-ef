@@ -69,6 +69,7 @@ public class WakeupReceiver extends BroadcastReceiver {
             Class c = Class.forName(className);
             Intent activityIntent = new Intent(context, c);
 
+            activityIntent.setPackage(context.getPackageName());
             activityIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activityIntent.putExtra("wakeup", intent.getBooleanExtra("wakeup", true));
             activityIntent.putExtra("triggerAt", now);
@@ -99,7 +100,7 @@ public class WakeupReceiver extends BroadcastReceiver {
 
             PendingIntent sender = PendingIntent.getBroadcast(
                 context, 19999 + WakeupPlugin.daysOfWeek.get(intent.getExtras().get("day")), intent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
             );
             AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
 
