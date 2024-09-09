@@ -84,9 +84,6 @@ public class WakeupStartService extends Service {
     // current volume
     private int volume;
 
-    // current volume
-    private float fadeInVolume;
-
     // current stream type
     private int streamType;
 
@@ -105,10 +102,10 @@ public class WakeupStartService extends Service {
     // current player state
     private RadioPlayerState radioPlayerState = RadioPlayerState.IDLE;
 
-    // current stream url
+    // current ringtone url
     private String ringtoneUrl;
 
-    // alarm media player
+    // ringtone media player
     private MediaPlayer ringtoneSound;
 
     // AudioFocusRequest
@@ -119,6 +116,12 @@ public class WakeupStartService extends Service {
 
     // timer to auto stop service after a timeout
     private Timer autoStopTimer;
+
+    // current fade in volume
+    private float fadeInVolume;
+
+    // timer to fade in volume from 0 to the volume set
+    private Timer fadeInVolumeTimer;
 
     // receiver for destroy intent
     private BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
@@ -444,7 +447,7 @@ public class WakeupStartService extends Service {
                     WakeupStartService.this.log("Player state changed. Playing");
                     WakeupStartService.this.radioPlayerState = RadioPlayerState.PLAYING;
                     // fade in volume
-                    WakeupStartService.this.fadeInVolumeFor(true);
+                    WakeupStartService.this.startFadeInVolume(true);
                 }
             }
         };
@@ -528,7 +531,7 @@ public class WakeupStartService extends Service {
             this.ringtoneSound.prepare();
             this.ringtoneSound.start();
             // fade in volume
-            this.fadeInVolumeFor(false);
+            this.startFadeInVolume(false);
             return true;
         } catch (IOException exeption) {
             log("Can't play the ringtone!");
@@ -600,7 +603,19 @@ public class WakeupStartService extends Service {
         }
     }
 
-    private void fadeInVolumeFor(boolean forPlayer) {
+    private void cancelFadeInTimer() {
+        if (this.fadeInVolumeTimer == null) {
+            return;
+        }
+
+        this.fadeInVolumeTimer.cancel();
+        this.fadeInVolumeTimer.purge();
+        this.fadeInVolumeTimer = null;
+    }
+
+    private void startFadeInVolume(boolean forPlayer) {
+        this.cancelFadeInTimer();
+
         // started to play, fade in the volume
         if (this.volume < 20) {
             return;
@@ -616,12 +631,22 @@ public class WakeupStartService extends Service {
         int numberOfSteps = FADE_DURATION / FADE_INTERVAL;
         // calculate by how much the volume changes each step
         final float deltaVolume = (this.volume * 0.01f) / (float) numberOfSteps;
+
         // create a new Timer and Timer task to run the fading outside the main UI thread
-        final Timer timer = new Timer(true);
+        this.fadeInVolumeTimer = new Timer(true);
 
         TimerTask timerTask = new TimerTask() {
             @Override
             public void run() {
+                // check if no longer available
+                if (
+                    (forPlayer && WakeupStartService.this.radioPlayer == null)
+                    || (!forPlayer && WakeupStartService.this.ringtoneSound == null)
+                ) {
+                    WakeupStartService.this.cancelFadeInTimer();
+                    return;
+                }
+
                 WakeupStartService.this.fadeInVolume += deltaVolume;
 
                 if (forPlayer) {
@@ -635,13 +660,12 @@ public class WakeupStartService extends Service {
 
                 // cancel and purge the Timer if the desired volume has been reached
                 if (WakeupStartService.this.fadeInVolume >= 1) {
-                    timer.cancel();
-                    timer.purge();
+                    WakeupStartService.this.cancelFadeInTimer();
                 }
             }
         };
 
-        timer.schedule(timerTask, FADE_INTERVAL, FADE_INTERVAL);
+        this.fadeInVolumeTimer.schedule(timerTask, FADE_INTERVAL, FADE_INTERVAL);
     }
 
     private String getAppName() {
