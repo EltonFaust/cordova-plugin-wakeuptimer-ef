@@ -26,6 +26,9 @@ import android.R;
 import android.text.format.DateFormat;
 import android.util.Log;
 
+import android.os.HandlerThread;
+import android.os.Handler;
+
 import java.io.IOException;
 import java.util.Date;
 import java.util.Timer;
@@ -68,6 +71,9 @@ public class WakeupStartService extends Service {
         PLAYING,
         STOPPED,
     }
+
+    private static HandlerThread handlerThread = null;
+    private static Handler requestHandler = null;
 
     // Notification manager
     private NotificationManager notificationManager;
@@ -452,46 +458,51 @@ public class WakeupStartService extends Service {
             }
         };
 
-        int audioUsageType = this.streamType == AudioManager.STREAM_ALARM
-            ? C.USAGE_ALARM
-            : C.USAGE_MEDIA;
+        getRequestHandler().post(new Runnable() {
+            public void run() {
+                int audioUsageType = WakeupStartService.this.streamType == AudioManager.STREAM_ALARM
+                    ? C.USAGE_ALARM
+                    : C.USAGE_MEDIA;
 
-        DataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(
-            this.getApplicationContext(),
-            new DefaultHttpDataSource.Factory()
-                .setUserAgent("CordovaWakeupPlugin")
-        );
+                DataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(
+                    WakeupStartService.this.getApplicationContext(),
+                    new DefaultHttpDataSource.Factory()
+                        .setUserAgent("CordovaWakeupPlugin")
+                );
 
-        ExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
+                ExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
 
-        this.radioPlayer = new ExoPlayer.Builder(this.getApplicationContext())
-            .setMediaSourceFactory(
-                new DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
-            )
-            .setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setUsage(audioUsageType)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                false
-            )
-            .build();
+                WakeupStartService.this.radioPlayer = new ExoPlayer.Builder(WakeupStartService.this.getApplicationContext())
+                    .setLooper(getRequestHandler().getLooper())
+                    .setMediaSourceFactory(
+                        new DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
+                    )
+                    .setAudioAttributes(
+                        new AudioAttributes.Builder()
+                            .setUsage(audioUsageType)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                            .build(),
+                        false
+                    )
+                    .build();
 
-        // Per MediaItem settings.
-        MediaItem mediaItem = new MediaItem.Builder()
-            .setUri(Uri.parse(this.streamingUrl))
-            .setLiveConfiguration(
-                new MediaItem.LiveConfiguration.Builder()
-                    .build()
-            )
-            .build();
+                // Per MediaItem settings.
+                MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(Uri.parse(WakeupStartService.this.streamingUrl))
+                    .setLiveConfiguration(
+                        new MediaItem.LiveConfiguration.Builder()
+                            .build()
+                    )
+                    .build();
 
-        this.radioPlayer.setMediaItem(mediaItem);
-        this.radioPlayer.addListener(this.playerEventListener);
-        this.radioPlayer.prepare();
-        // if the volume is 20% or higher it will fade in from 0 to the set valume
-        this.radioPlayer.setVolume(this.volume >= 20 ? 0 : this.volume * 0.01f);
-        this.radioPlayer.setPlayWhenReady(true);
+                WakeupStartService.this.radioPlayer.setMediaItem(mediaItem);
+                WakeupStartService.this.radioPlayer.addListener(WakeupStartService.this.playerEventListener);
+                WakeupStartService.this.radioPlayer.prepare();
+                // if the volume is 20% or higher it will fade in from 0 to the set valume
+                WakeupStartService.this.radioPlayer.setVolume(WakeupStartService.this.volume >= 20 ? 0 : WakeupStartService.this.volume * 0.01f);
+                WakeupStartService.this.radioPlayer.setPlayWhenReady(true);
+            }
+        });
 
         return true;
     }
@@ -499,7 +510,13 @@ public class WakeupStartService extends Service {
     private void releaseRadioPlayer() {
         if (this.radioPlayer != null) {
             this.radioPlayerState = RadioPlayerState.STOPPED;
-            this.radioPlayer.release();
+
+            getRequestHandler().post(new Runnable() {
+                public void run() {
+                    WakeupStartService.this.radioPlayer.release();
+                }
+            });
+
             this.radioPlayer = null;
         }
     }
@@ -624,7 +641,7 @@ public class WakeupStartService extends Service {
         // initial volume
         this.fadeInVolume = 0;
         // the duration of the fade
-        final int FADE_DURATION = 3000;
+        final int FADE_DURATION = 10000;
         // the amount of time between volume changes. The smaller this is, the smoother the fade
         final int FADE_INTERVAL = this.volume >= 50 ? 250 : 350;
         // calculate the number of fade steps
@@ -650,7 +667,11 @@ public class WakeupStartService extends Service {
                 WakeupStartService.this.fadeInVolume += deltaVolume;
 
                 if (forPlayer) {
-                    WakeupStartService.this.radioPlayer.setVolume(WakeupStartService.this.fadeInVolume);
+                    getRequestHandler().post(new Runnable() {
+                        public void run() {
+                            WakeupStartService.this.radioPlayer.setVolume(WakeupStartService.this.fadeInVolume);
+                        }
+                    });
                 } else {
                     WakeupStartService.this.ringtoneSound.setVolume(
                         WakeupStartService.this.fadeInVolume,
@@ -674,5 +695,15 @@ public class WakeupStartService extends Service {
 
     private void log(String log) {
         Log.d(LOG_TAG, log);
+    }
+
+    public static Handler getRequestHandler() {
+        if (handlerThread == null) {
+            handlerThread = new HandlerThread("WakeupTimerOperation");
+            handlerThread.start();
+            requestHandler = new Handler(handlerThread.getLooper());
+        }
+
+        return requestHandler;
     }
 }
