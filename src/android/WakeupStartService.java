@@ -11,10 +11,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -27,24 +23,36 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.preference.PreferenceManager;
 import android.R;
-import androidx.annotation.RequiresApi;
 import android.text.format.DateFormat;
 import android.util.Log;
+
+import android.os.HandlerThread;
+import android.os.Handler;
+
 import java.io.IOException;
 import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
 
-import com.google.android.exoplayer2.*;
-import com.google.android.exoplayer2.extractor.*;
-import com.google.android.exoplayer2.source.*;
-import com.google.android.exoplayer2.source.dash.*;
-import com.google.android.exoplayer2.source.hls.*;
-import com.google.android.exoplayer2.source.smoothstreaming.*;
-import com.google.android.exoplayer2.trackselection.*;
-import com.google.android.exoplayer2.ui.*;
-import com.google.android.exoplayer2.upstream.*;
-import com.google.android.exoplayer2.util.*;
+import androidx.annotation.RequiresApi;
+
+import android.media.AudioManager;
+import android.media.AudioFocusRequest;
+// import android.media.AudioAttributes;
+import android.media.MediaPlayer;
+
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.PlaybackParameters;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.extractor.ExtractorsFactory;
+import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 
 public class WakeupStartService extends Service {
     private static final String LOG_TAG = "WakeupStartService";
@@ -63,6 +71,9 @@ public class WakeupStartService extends Service {
         PLAYING,
         STOPPED,
     }
+
+    private static HandlerThread handlerThread = null;
+    private static Handler requestHandler = null;
 
     // Notification manager
     private NotificationManager notificationManager;
@@ -83,27 +94,24 @@ public class WakeupStartService extends Service {
     private int streamType;
 
     // AudioAttributes
-    private AudioAttributes audioAttributes;
-
-    // exoplayer audio attributes
-    private com.google.android.exoplayer2.audio.AudioAttributes playerAudioAttributes;
+    private android.media.AudioAttributes audioAttributes;
 
     // current streaming url
     private String streamingUrl;
 
     // streaming player instance
-    private SimpleExoPlayer radioPlayer;
+    private ExoPlayer radioPlayer;
+
+    // player event listener
+    private ExoPlayer.Listener playerEventListener;
 
     // current player state
     private RadioPlayerState radioPlayerState = RadioPlayerState.IDLE;
 
-    // player event listener
-    private ExoPlayer.EventListener playerEventListener;
-
-    // current stream url
+    // current ringtone url
     private String ringtoneUrl;
 
-    // alarm media player
+    // ringtone media player
     private MediaPlayer ringtoneSound;
 
     // AudioFocusRequest
@@ -114,6 +122,12 @@ public class WakeupStartService extends Service {
 
     // timer to auto stop service after a timeout
     private Timer autoStopTimer;
+
+    // current fade in volume
+    private float fadeInVolume;
+
+    // timer to fade in volume from 0 to the volume set
+    private Timer fadeInVolumeTimer;
 
     // receiver for destroy intent
     private BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
@@ -188,11 +202,9 @@ public class WakeupStartService extends Service {
 
         int result = AudioManager.AUDIOFOCUS_REQUEST_FAILED;
 
-        this.buidAudioAttributes();
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             this.audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(this.audioAttributes)
+                .setAudioAttributes(this.buidAudioAttributes())
                 .setAcceptsDelayedFocusGain(false)
                 .setOnAudioFocusChangeListener(this.audioFocusChangeListener)
                 .build();
@@ -410,21 +422,17 @@ public class WakeupStartService extends Service {
 
         log("Starting radio player");
 
-        this.playerEventListener = playerEventListener = new ExoPlayer.EventListener() {
+        this.playerEventListener = playerEventListener = new ExoPlayer.Listener() {
             @Override
-            public void onPlayerError(ExoPlaybackException error) {
+            public void onPlayerError(PlaybackException error) {
                 WakeupStartService.this.releaseRadioPlayer();
                 WakeupStartService.this.startRingtoneOrStop();
                 WakeupStartService.this.log("ERROR OCCURED.");
             }
 
             @Override
-            public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-                if (playWhenReady && playbackState == ExoPlayer.STATE_READY && WakeupStartService.this.radioPlayerState != RadioPlayerState.PLAYING) {
-                    // The player is only playing if the state is Player.STATE_READY and playWhenReady=true
-                    WakeupStartService.this.log("Player state changed. Playing");
-                    WakeupStartService.this.radioPlayerState = RadioPlayerState.PLAYING;
-                } else if (playbackState == ExoPlayer.STATE_IDLE && WakeupStartService.this.radioPlayerState == RadioPlayerState.PLAYING) {
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState == ExoPlayer.STATE_IDLE && WakeupStartService.this.radioPlayerState == RadioPlayerState.PLAYING) {
                     // Player.STATE_IDLE: This is the initial state, the state when the player is stopped, and when playback failed.
                     WakeupStartService.this.log("Player state changed. Stopped");
                     WakeupStartService.this.releaseRadioPlayer();
@@ -433,30 +441,68 @@ public class WakeupStartService extends Service {
                     WakeupStartService.this.log("Player state changed. ExoPlayer State: " + playbackState + ", Current state: " + WakeupStartService.this.radioPlayerState);
                 }
             }
+
+            @Override
+            public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                if (
+                    playWhenReady
+                    && reason == ExoPlayer.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+                    && WakeupStartService.this.radioPlayerState != RadioPlayerState.PLAYING
+                ) {
+                    // The player is only playing if the state is Player.STATE_READY and playWhenReady=true
+                    WakeupStartService.this.log("Player state changed. Playing");
+                    WakeupStartService.this.radioPlayerState = RadioPlayerState.PLAYING;
+                    // fade in volume
+                    WakeupStartService.this.startFadeInVolume(true);
+                }
+            }
         };
 
-        DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter();
-        TrackSelector trackSelector = new DefaultTrackSelector();
-        LoadControl loadControl = new DefaultLoadControl();
+        getRequestHandler().post(new Runnable() {
+            public void run() {
+                int audioUsageType = WakeupStartService.this.streamType == AudioManager.STREAM_ALARM
+                    ? C.USAGE_ALARM
+                    : C.USAGE_MEDIA;
 
-        this.radioPlayer = ExoPlayerFactory.newSimpleInstance(this.getApplicationContext(), trackSelector, loadControl);
-        this.radioPlayer.addListener(this.playerEventListener);
+                DataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(
+                    WakeupStartService.this.getApplicationContext(),
+                    new DefaultHttpDataSource.Factory()
+                        .setUserAgent("CordovaWakeupPlugin")
+                );
 
-        DataSource.Factory dataSourceFactory = new DefaultDataSourceFactory(getApplicationContext(), "CordovaWakeupPlugin");
-        ExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
+                ExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
 
-        Handler mainHandler = new Handler();
-        MediaSource mediaSource = new ExtractorMediaSource(Uri.parse(this.streamingUrl), dataSourceFactory, extractorsFactory, mainHandler, null);
+                WakeupStartService.this.radioPlayer = new ExoPlayer.Builder(WakeupStartService.this.getApplicationContext())
+                    .setLooper(getRequestHandler().getLooper())
+                    .setMediaSourceFactory(
+                        new DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
+                    )
+                    .setAudioAttributes(
+                        new AudioAttributes.Builder()
+                            .setUsage(audioUsageType)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                            .build(),
+                        false
+                    )
+                    .build();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            this.radioPlayer.setAudioAttributes(this.playerAudioAttributes);
-        } else {
-            this.radioPlayer.setAudioStreamType(this.streamType);
-        }
+                // Per MediaItem settings.
+                MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(Uri.parse(WakeupStartService.this.streamingUrl))
+                    .setLiveConfiguration(
+                        new MediaItem.LiveConfiguration.Builder()
+                            .build()
+                    )
+                    .build();
 
-        this.radioPlayer.prepare(mediaSource);
-        this.radioPlayer.setVolume(this.volume * 0.01f);
-        this.radioPlayer.setPlayWhenReady(true);
+                WakeupStartService.this.radioPlayer.setMediaItem(mediaItem);
+                WakeupStartService.this.radioPlayer.addListener(WakeupStartService.this.playerEventListener);
+                WakeupStartService.this.radioPlayer.prepare();
+                // if the volume is 20% or higher it will fade in from 0 to the set valume
+                WakeupStartService.this.radioPlayer.setVolume(WakeupStartService.this.volume >= 20 ? 0 : WakeupStartService.this.volume * 0.01f);
+                WakeupStartService.this.radioPlayer.setPlayWhenReady(true);
+            }
+        });
 
         return true;
     }
@@ -464,7 +510,13 @@ public class WakeupStartService extends Service {
     private void releaseRadioPlayer() {
         if (this.radioPlayer != null) {
             this.radioPlayerState = RadioPlayerState.STOPPED;
-            this.radioPlayer.release();
+
+            getRequestHandler().post(new Runnable() {
+                public void run() {
+                    WakeupStartService.this.radioPlayer.release();
+                }
+            });
+
             this.radioPlayer = null;
         }
     }
@@ -478,10 +530,15 @@ public class WakeupStartService extends Service {
 
         this.ringtoneSound = new MediaPlayer();
         this.ringtoneSound.setLooping(true);
-        this.ringtoneSound.setVolume(this.volume * 0.01f, this.volume * 0.01f);
+
+        if (this.volume >= 20) {
+            this.ringtoneSound.setVolume(0, 0);
+        } else {
+            this.ringtoneSound.setVolume(this.volume * 0.01f, this.volume * 0.01f);
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            this.ringtoneSound.setAudioAttributes(this.audioAttributes);
+            this.ringtoneSound.setAudioAttributes(this.buidAudioAttributes());
         } else {
             this.ringtoneSound.setAudioStreamType(this.streamType);
         }
@@ -490,6 +547,8 @@ public class WakeupStartService extends Service {
             this.ringtoneSound.setDataSource(this.getApplicationContext(), Uri.parse(this.ringtoneUrl));
             this.ringtoneSound.prepare();
             this.ringtoneSound.start();
+            // fade in volume
+            this.startFadeInVolume(false);
             return true;
         } catch (IOException exeption) {
             log("Can't play the ringtone!");
@@ -504,26 +563,21 @@ public class WakeupStartService extends Service {
         }
     }
 
-    private void buidAudioAttributes() {
+    private android.media.AudioAttributes buidAudioAttributes() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return;
+            return null;
         }
 
-        int audioUsageType = this.streamType == AudioManager.STREAM_MUSIC ? AudioAttributes.USAGE_MEDIA : AudioAttributes.USAGE_ALARM;
+        int audioUsageType = this.streamType == AudioManager.STREAM_ALARM
+            ? C.USAGE_ALARM
+            : C.USAGE_MEDIA;
 
-        if (this.audioAttributes == null) {
-            this.audioAttributes = new AudioAttributes.Builder()
-                .setUsage(audioUsageType)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build();
-        }
+        this.audioAttributes = new android.media.AudioAttributes.Builder()
+            .setUsage(audioUsageType)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build();
 
-        if (this.playerAudioAttributes == null) {
-            this.playerAudioAttributes = new com.google.android.exoplayer2.audio.AudioAttributes.Builder()
-                .setUsage(audioUsageType)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build();
-        }
+        return this.audioAttributes;
     }
 
     public boolean isConnectedOnWifi() {
@@ -566,11 +620,90 @@ public class WakeupStartService extends Service {
         }
     }
 
+    private void cancelFadeInTimer() {
+        if (this.fadeInVolumeTimer == null) {
+            return;
+        }
+
+        this.fadeInVolumeTimer.cancel();
+        this.fadeInVolumeTimer.purge();
+        this.fadeInVolumeTimer = null;
+    }
+
+    private void startFadeInVolume(boolean forPlayer) {
+        this.cancelFadeInTimer();
+
+        // started to play, fade in the volume
+        if (this.volume < 20) {
+            return;
+        }
+
+        // initial volume
+        this.fadeInVolume = 0;
+        // the duration of the fade
+        final int FADE_DURATION = 10000;
+        // the amount of time between volume changes. The smaller this is, the smoother the fade
+        final int FADE_INTERVAL = this.volume >= 50 ? 250 : 350;
+        // calculate the number of fade steps
+        int numberOfSteps = FADE_DURATION / FADE_INTERVAL;
+        // calculate by how much the volume changes each step
+        final float deltaVolume = (this.volume * 0.01f) / (float) numberOfSteps;
+
+        // create a new Timer and Timer task to run the fading outside the main UI thread
+        this.fadeInVolumeTimer = new Timer(true);
+
+        TimerTask timerTask = new TimerTask() {
+            @Override
+            public void run() {
+                // check if no longer available
+                if (
+                    (forPlayer && WakeupStartService.this.radioPlayer == null)
+                    || (!forPlayer && WakeupStartService.this.ringtoneSound == null)
+                ) {
+                    WakeupStartService.this.cancelFadeInTimer();
+                    return;
+                }
+
+                WakeupStartService.this.fadeInVolume += deltaVolume;
+
+                if (forPlayer) {
+                    getRequestHandler().post(new Runnable() {
+                        public void run() {
+                            WakeupStartService.this.radioPlayer.setVolume(WakeupStartService.this.fadeInVolume);
+                        }
+                    });
+                } else {
+                    WakeupStartService.this.ringtoneSound.setVolume(
+                        WakeupStartService.this.fadeInVolume,
+                        WakeupStartService.this.fadeInVolume
+                    );
+                }
+
+                // cancel and purge the Timer if the desired volume has been reached
+                if (WakeupStartService.this.fadeInVolume >= 1) {
+                    WakeupStartService.this.cancelFadeInTimer();
+                }
+            }
+        };
+
+        this.fadeInVolumeTimer.schedule(timerTask, FADE_INTERVAL, FADE_INTERVAL);
+    }
+
     private String getAppName() {
         return this.getApplicationContext().getApplicationInfo().loadLabel(this.getApplicationContext().getPackageManager()).toString();
     }
 
     private void log(String log) {
         Log.d(LOG_TAG, log);
+    }
+
+    public static Handler getRequestHandler() {
+        if (handlerThread == null) {
+            handlerThread = new HandlerThread("WakeupTimerOperation");
+            handlerThread.start();
+            requestHandler = new Handler(handlerThread.getLooper());
+        }
+
+        return requestHandler;
     }
 }
