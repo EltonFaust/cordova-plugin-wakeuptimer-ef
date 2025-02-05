@@ -513,11 +513,12 @@ public class WakeupStartService extends Service {
 
             getRequestHandler().post(new Runnable() {
                 public void run() {
-                    WakeupStartService.this.radioPlayer.release();
+                    if (WakeupStartService.this.radioPlayer != null) {
+                        WakeupStartService.this.radioPlayer.release();
+                        WakeupStartService.this.radioPlayer = null;
+                    }
                 }
             });
-
-            this.radioPlayer = null;
         }
     }
 
