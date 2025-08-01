@@ -114,6 +114,7 @@ public class WakeupStartService extends Service {
     // ringtone media player
     private MediaPlayer ringtoneSound;
 
+    private boolean audioFocused = false;
     // AudioFocusRequest
     private AudioFocusRequest audioFocusRequest;
 
@@ -200,22 +201,15 @@ public class WakeupStartService extends Service {
         this.streamType = prefs.getInt("alarms_stream_type", AudioManager.STREAM_ALARM);
         String notificationText = prefs.getString("alarms_notification_text", "%time%");
 
-        int result = AudioManager.AUDIOFOCUS_REQUEST_FAILED;
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            this.audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(this.buidAudioAttributes())
-                .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener(this.audioFocusChangeListener)
-                .build();
-
-            result = this.audioManager.requestAudioFocus(this.audioFocusRequest);
-        } else {
-            result = this.audioManager.requestAudioFocus(this.audioFocusChangeListener, streamType, AudioManager.AUDIOFOCUS_GAIN);
-        }
-
-        if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            log("Can't gain audio focus!");
+        // on android 15 (SDK 35), focus requests was restricted, for a top app and should be for running foreground service,
+        // but apparently there is a bug that on foreground services allways result in AUDIOFOCUS_REQUEST_FAILED
+        // in case of failure on android 15+ it will not auto stop the service
+        // https://developer.android.com/about/versions/15/behavior-changes-15#audio-focus
+        // https://issuetracker.google.com/issues/375228130?pli=1
+        if (
+            !this.requestAudioFocus()
+            && Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM
+        ) {
             this.stopSelf();
             return START_NOT_STICKY;
         }
@@ -289,7 +283,6 @@ public class WakeupStartService extends Service {
                 // this code will be executed after 5 minutes
                 log("Timed out, auto shuting down service");
                 WakeupStartService.this.stopSelf();
-
             }
         }, 5 * 60 * 1000 * 1L);
 
@@ -330,12 +323,7 @@ public class WakeupStartService extends Service {
         // already dismissed, no need trigger the wakeup event on initialize the app
         WakeupPlugin.cleaPendingWakeupResult();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            this.audioManager.abandonAudioFocusRequest(this.audioFocusRequest);
-        } else {
-            this.audioManager.abandonAudioFocus(this.audioFocusChangeListener);
-        }
-
+        this.abandonAudioFocus();
         this.releaseRadioPlayer();
 
         if (this.ringtoneSound != null) {
@@ -508,18 +496,20 @@ public class WakeupStartService extends Service {
     }
 
     private void releaseRadioPlayer() {
-        if (this.radioPlayer != null) {
-            this.radioPlayerState = RadioPlayerState.STOPPED;
-
-            getRequestHandler().post(new Runnable() {
-                public void run() {
-                    if (WakeupStartService.this.radioPlayer != null) {
-                        WakeupStartService.this.radioPlayer.release();
-                        WakeupStartService.this.radioPlayer = null;
-                    }
-                }
-            });
+        if (this.radioPlayer == null) {
+            return;
         }
+
+        this.radioPlayerState = RadioPlayerState.STOPPED;
+
+        getRequestHandler().post(new Runnable() {
+            public void run() {
+                if (WakeupStartService.this.radioPlayer != null) {
+                    WakeupStartService.this.radioPlayer.release();
+                    WakeupStartService.this.radioPlayer = null;
+                }
+            }
+        });
     }
 
     private boolean startRingtone() {
@@ -581,7 +571,54 @@ public class WakeupStartService extends Service {
         return this.audioAttributes;
     }
 
-    public boolean isConnectedOnWifi() {
+    private boolean requestAudioFocus() {
+        int result = AudioManager.AUDIOFOCUS_REQUEST_FAILED;
+
+        this.abandonAudioFocus();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            this.audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(this.buidAudioAttributes())
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener(this.audioFocusChangeListener)
+                .build();
+
+            result = this.audioManager.requestAudioFocus(this.audioFocusRequest);
+        } else {
+            result = this.audioManager.requestAudioFocus(this.audioFocusChangeListener, this.streamType, AudioManager.AUDIOFOCUS_GAIN);
+        }
+
+        this.audioFocused = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+
+        log(this.audioFocused ? "Audio focus granted" : "Audio focus NOT granted");
+
+        return this.audioFocused;
+    }
+
+    private void abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (this.audioFocusRequest != null) {
+                log("Audio focus abandoned");
+                this.audioManager.abandonAudioFocusRequest(this.audioFocusRequest);
+            }
+        } else if (this.audioFocusChangeListener != null) {
+            log("Audio focus abandoned");
+            this.audioManager.abandonAudioFocus(this.audioFocusChangeListener);
+        }
+
+        this.audioFocused = false;
+    }
+
+    // private void retryRequestAudioFocus(String retryPoint) {
+    //     if (this.audioFocused) {
+    //         return;
+    //     }
+
+    //     log("Retrying to request focus at ".concat(retryPoint));
+    //     this.requestAudioFocus();
+    // }
+
+    private boolean isConnectedOnWifi() {
         ConnectivityManager cm = (ConnectivityManager) this.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
 
         if (cm == null) {
